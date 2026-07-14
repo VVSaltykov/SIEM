@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/LogCollector/">
+    <Project Path="SIEM.LogCollector.Core/SIEM.LogCollector.Core.csproj" Id="979a42a7-3eab-4472-aa5c-6905283e0c0e" />
+    <Project Path="SIEM.LogCollector.Host/SIEM.LogCollector.Host.csproj" Id="fa423aa2-ea1c-4685-8f84-0d1587f4dad6" />
+    <Project Path="SIEM.LogCollector.Infrastructure/SIEM.LogCollector.Infrastructure.csproj" Id="1dee9ea8-9259-405a-a4a0-9eac365cb9a0" />
+    <Project Path="SIEM.LogCollector.Shared/SIEM.LogCollector.Shared.csproj" Id="072dc908-1921-4706-b1cd-e379c301f0f0" />
+  </Folder>
+  <Project Path="SIEM.API/SIEM.API.csproj" />
+</Solution>
