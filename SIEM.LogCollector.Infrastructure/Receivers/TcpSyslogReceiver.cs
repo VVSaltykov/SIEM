@@ -39,6 +39,17 @@ public class TcpSyslogReceiver : BackgroundService, ILogReceiver
         _listener.Start();
         _logger.LogInformation("TCP Syslog receiver started on port {Port}", _options.Port);
 
+        try
+        {
+            _listener = new TcpListener(IPAddress.Any, _options.Port);
+            _listener.Start();
+            Console.WriteLine($"Listener started on port {_options.Port}");
+        }
+        catch (SocketException ex)
+        {
+            Console.WriteLine($"SocketException: {ex.Message}");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
