@@ -18,8 +18,8 @@ namespace SIEM.LogCollector.Infrastructure.Consumers
         private readonly ILogger<KafkaConsumer> _logger;
         private readonly IConsumer<string, string> _consumer;
         private readonly string _topic;
-        private readonly IEnumerable<ILogProcessor> _processors; // если процессоры остались
-        private readonly ILogStorage _storage; // вместо ILogProducer
+        private readonly IEnumerable<ILogProcessor> _processors;
+        private readonly ILogStorage _storage;
         private readonly JsonSerializerOptions _jsonOptions = new()
         {
             PropertyNameCaseInsensitive = true,
@@ -36,6 +36,9 @@ namespace SIEM.LogCollector.Infrastructure.Consumers
             _processors = processors;
             _storage = storage;
 
+            _logger.LogInformation("Initializing KafkaConsumer with BootstrapServers={BootstrapServers}, Topic={Topic}, GroupId={GroupId}",
+                options.Value.BootstrapServers, options.Value.Topic, options.Value.GroupId);
+
             var config = new ConsumerConfig
             {
                 BootstrapServers = options.Value.BootstrapServers,
@@ -45,22 +48,56 @@ namespace SIEM.LogCollector.Infrastructure.Consumers
                 AllowAutoCreateTopics = true
             };
 
-            _consumer = new ConsumerBuilder<string, string>(config).Build();
-            _topic = options.Value.Topic;
+            try
+            {
+                _consumer = new ConsumerBuilder<string, string>(config).Build();
+                _topic = options.Value.Topic;
+                _logger.LogInformation("Kafka consumer instance created successfully.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create Kafka consumer.");
+                throw;
+            }
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _consumer.Subscribe(_topic);
-            _logger.LogInformation("Kafka consumer started. Subscribed to {Topic}", _topic);
+            try
+            {
+                _consumer.Subscribe(_topic);
+                _logger.LogInformation("Kafka consumer started. Subscribed to topic: {Topic}", _topic);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to subscribe to topic {Topic}", _topic);
+                throw;
+            }
 
             try
             {
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    var consumeResult = _consumer.Consume(stoppingToken);
-                    if (consumeResult?.Message?.Value == null)
+                    ConsumeResult<string, string> consumeResult;
+                    try
+                    {
+                        consumeResult = _consumer.Consume(stoppingToken);
+                        if (consumeResult?.Message?.Value == null)
+                            continue;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        _logger.LogInformation("Consume operation cancelled.");
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error while consuming message from Kafka.");
                         continue;
+                    }
+
+                    _logger.LogInformation("Received message from Kafka. Partition: {Partition}, Offset: {Offset}, Key: {Key}",
+                        consumeResult.Partition, consumeResult.Offset, consumeResult.Message.Key);
 
                     try
                     {
@@ -70,35 +107,78 @@ namespace SIEM.LogCollector.Infrastructure.Consumers
 
                         if (logEvent == null)
                         {
-                            _logger.LogWarning("Failed to deserialize message");
+                            _logger.LogWarning("Failed to deserialize message (null result). Raw value: {Value}",
+                                consumeResult.Message.Value.Length > 200 ? consumeResult.Message.Value.Substring(0, 200) + "..." : consumeResult.Message.Value);
                             continue;
                         }
 
+                        _logger.LogInformation("Deserialized LogEvent: Host={Host}, Timestamp={Timestamp}, Message length={Length}",
+                            logEvent.Host, logEvent.Timestamp, logEvent.Message?.Length ?? 0);
+
                         var processed = logEvent;
+                        bool processedByAny = false;
                         foreach (var processor in _processors)
                         {
-                            processed = await processor.ProcessAsync(processed);
-                            if (processed == null) break;
+                            try
+                            {
+                                _logger.LogDebug("Processing with processor {ProcessorType}", processor.GetType().Name);
+                                processed = await processor.ProcessAsync(processed);
+                                if (processed == null)
+                                {
+                                    _logger.LogWarning("Processor {ProcessorType} returned null. Event will be dropped.", processor.GetType().Name);
+                                    break;
+                                }
+                                processedByAny = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error in processor {ProcessorType}", processor.GetType().Name);
+                                throw;
+                            }
                         }
 
-                        if (processed != null)
+                        if (processed != null && processedByAny)
+                        {
+                            _logger.LogInformation("Event passed all processors. Saving to Elasticsearch...");
                             await _storage.StoreAsync(processed);
+                            _logger.LogInformation("Event successfully saved to Elasticsearch.");
+                        }
+                        else if (processed == null)
+                        {
+                            _logger.LogWarning("Event was filtered out by a processor.");
+                        }
+                        else
+                        {
+                            _logger.LogWarning("No processors executed? processed={Processed}, processedByAny={ProcessedByAny}", processed != null, processedByAny);
+                        }
 
                         _consumer.Commit(consumeResult);
+                        _logger.LogDebug("Committed offset {Offset} for partition {Partition}", consumeResult.Offset, consumeResult.Partition);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogError(ex, "JSON deserialization error. Raw message: {Value}",
+                            consumeResult.Message.Value.Length > 500 ? consumeResult.Message.Value.Substring(0, 500) + "..." : consumeResult.Message.Value);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing message");
+                        _logger.LogError(ex, "Error processing message from Kafka (Partition={Partition}, Offset={Offset})",
+                            consumeResult.Partition, consumeResult.Offset);
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                _logger.LogInformation("Consumer stopped");
+                _logger.LogInformation("Consumer stopped due to cancellation.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error in Kafka consumer loop.");
             }
             finally
             {
                 _consumer.Close();
+                _logger.LogInformation("Kafka consumer closed.");
             }
         }
 

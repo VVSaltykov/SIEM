@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Nest;
 using SIEM.LogCollector.Core.Interfaces;
 using SIEM.LogCollector.Core.Models;
@@ -20,26 +21,47 @@ namespace SIEM.LogCollector.Infrastructure.Storages
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false
         };
+        private readonly ILogger<ElasticsearchStorage> _logger;
 
-        public ElasticsearchStorage(IOptions<ElasticsearchOptions> options)
+        public ElasticsearchStorage(IOptions<ElasticsearchOptions> options, ILogger<ElasticsearchStorage> logger)
         {
+            _logger = logger;
             _httpClient = new HttpClient();
             _httpClient.BaseAddress = new Uri(options.Value.Url);
             _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
-            // Если нужно, можно добавить совместимость с версией 8 (обычно не требуется)
-            // _httpClient.DefaultRequestHeaders.Add("Accept", "application/vnd.elasticsearch+json;compatible-with=8");
             _indexName = options.Value.Index;
+
+            _logger.LogInformation("ElasticsearchStorage initialized with Url={Url}, Index={Index}", options.Value.Url, _indexName);
         }
 
         public async Task StoreAsync(LogEvent logEvent)
         {
-            var json = JsonSerializer.Serialize(logEvent, _jsonOptions);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync($"{_indexName}/_doc", content);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                var errorBody = await response.Content.ReadAsStringAsync();
-                throw new Exception($"Elasticsearch error: {response.StatusCode} - {errorBody}");
+                var json = JsonSerializer.Serialize(logEvent, _jsonOptions);
+                _logger.LogDebug("Serialized event to JSON: {Json}", json.Length > 500 ? json.Substring(0, 500) + "..." : json);
+
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync($"{_indexName}/_doc", content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Elasticsearch error: StatusCode={StatusCode}, Error={Error}", response.StatusCode, errorBody);
+                    throw new Exception($"Elasticsearch error: {response.StatusCode} - {errorBody}");
+                }
+
+                _logger.LogInformation("Document indexed successfully in {Index}.", _indexName);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "HTTP request to Elasticsearch failed.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while storing event in Elasticsearch.");
+                throw;
             }
         }
     }
