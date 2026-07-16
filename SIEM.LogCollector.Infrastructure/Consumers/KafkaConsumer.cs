@@ -112,8 +112,8 @@ namespace SIEM.LogCollector.Infrastructure.Consumers
 
     public class KafkaConsumerOptions
     {
-        public string BootstrapServers { get; set; } = "localhost:9093";
-        public string Topic { get; set; } = "kaspersky-logs";
-        public string GroupId { get; set; } = "log-processor-group";
+        public string BootstrapServers { get; set; }
+        public string Topic { get; set; }
+        public string GroupId { get; set; }
     }
 }
