@@ -37,8 +37,8 @@ namespace SIEM.LogCollector.Host
                     config.ReadFrom.Configuration(context.Configuration))
                 .ConfigureServices((context, services) =>
                 {
-                    services.Configure<ReceiverOptions>(context.Configuration.GetSection("Receiver"));
-                    services.Configure<KafkaOptions>(context.Configuration.GetSection("Kafka"));
+                    services.Configure<ElasticsearchOptions>(context.Configuration.GetSection("Elasticsearch"));
+                    services.Configure<KafkaConsumerOptions>(context.Configuration.GetSection("KafkaConsumer"));
                     services.Configure<FilterOptions>(context.Configuration.GetSection("Filter"));
 
                     services.AddSingleton<ILogParser, SyslogParser>();

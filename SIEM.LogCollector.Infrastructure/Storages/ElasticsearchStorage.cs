@@ -46,7 +46,7 @@ namespace SIEM.LogCollector.Infrastructure.Storages
 
     public class ElasticsearchOptions
     {
-        public string Url { get; set; } = "http://localhost:9200";
-        public string Index { get; set; } = "kaspersky-logs";
+        public string Url { get; set; }
+        public string Index { get; set; }
     }
 }
